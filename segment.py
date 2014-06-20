@@ -1,0 +1,156 @@
+#! /usr/bin/env python2
+"""Main cell segmentation script.
+
+Usage: ./segment.py --help
+"""
+import sys
+import argparse
+import os
+import glob
+import errno
+import shutil
+
+import pylab as plt
+from libtiff import TIFFimage
+from algo import HEID, KTH
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Segment cells in time-laspe\
+            microscopy images.')
+    subparsers = parser.add_subparsers(title='Segmentation algorithm, to use',
+                                       description='1. KTH-SE: developed in\
+                                       KTH, Sweden.\
+                                       2. HEID-GE: developed in University of\
+                                       Heidelberg, Germany.',
+                                       help='additional help',
+                                       dest='subparser_name')
+
+    # Global arguments.
+    parser.add_argument("directory",
+                        help="Path to directory containing the images.",
+                        type=str)
+    parser.add_argument("--isbi",
+                        help="Path to ISBI's seg evaluation tool. tiff images\
+                              will be written to the RES directory as\
+                              described in ISBI's documents.", type=str)
+    parser.add_argument("-v", "--verbose", help="Report progress.",
+                        action="store_true")
+    parser.add_argument("-d", "--debug", help="Debug mode.",
+                        action="store_true")
+
+    # HEID-GE arguments.
+    parser_heid = subparsers.add_parser('HEID-GE')
+    parser_heid.add_argument("sigma_f", help="Preprocessing Gaussian filter\
+            standard deviation.", type=float)
+    parser_heid.add_argument("r", help="Average object diameter.", type=int)
+    parser_heid.add_argument("min_var", help="Minimum variance threshold.",
+                             type=int)
+    parser_heid.add_argument("r_med", help="Radius of median filter.",
+                             type=int)
+
+    # KTH arguments.
+    parser_kth = subparsers.add_parser('KTH-SE')
+    parser_kth.add_argument("sigma_s", help="Variance of foreground emphasizing\
+                                        Gaussian.", type=float)
+    parser_kth.add_argument("sigma_b", help="Variance of background emphasizing\
+                                        Gaussian.", type=float)
+    parser_kth.add_argument("alpha", help="Constant used for bandpass filtering\
+                                       the image.", type=float)
+    parser_kth.add_argument("tau", help="Threshold used for segmentation.",
+                            type=float)
+    parser_kth.add_argument("--watershed", help="Use watershed for segmentation.",
+                            action="store_true")
+    parser_kth.add_argument("--sigma_w", help="Variance of smoothing Gaussian.",
+                            type=float)
+    parser_kth.add_argument("--h_min", help="H-minima transform parameter.",
+                            type=float)
+    parser_kth.add_argument("--a_min", help="Minimum cell area.",
+                            type=float)
+    parser_kth.add_argument("--s_min", help="Minimum cell summed intensity.",
+                            type=float)
+
+    args = parser.parse_args()
+
+    # Retrieve ordered frames list.
+    if args.directory[-1] != '/':
+        args.directory += '/'
+    frame_list = glob.glob(args.directory + '*.tif')
+    frame_list.sort()
+    n_frames = len(frame_list)
+
+    # Create results directory according to ISBI's naming scheme.
+    if args.isbi:
+        result_path = _mk_res_dir(args.directory)
+
+    # Segment each frame.
+    for idx, frame_path in enumerate(frame_list):
+        if args.verbose:
+            print "Starting to segment frame {0} / {1}".format(idx+1, n_frames)
+        frame = plt.imread(frame_path)
+        if args.subparser_name == 'HEID-GE':
+            segmented_frame = HEID(frame, args.sigma_f, args.r, args.min_var,
+                                   args.r_med).start()
+        elif args.subparser_name == 'KTH-SE':
+            segmented_frame = KTH(frame, args.sigma_s, args.sigma_b,
+                                  args.alpha, args.tau,
+                                  watershed=args.watershed,
+                                  sigma_w=args.sigma_w,
+                                  h_min=args.h_min, a_min=args.a_min,
+                                  s_min=args.s_min).start()
+        if args.isbi:
+            _gen_tiff(result_path, segmented_frame, idx)
+        if args.debug:
+            plt.subplot(1, 2, 1)
+            plt.title('Original Frame ({0})'.format(idx))
+            plt.imshow(frame)
+            plt.subplot(1, 2, 2)
+            plt.title('Segmented Frame ({0})'.format(idx))
+            plt.imshow(segmented_frame)
+            plt.show()
+
+    # Run ISBI's SEG measure tool.
+    if args.isbi:
+        split = args.directory.split('/')
+        seq_num = split[-2]
+        dataset_path = '/'.join(split[:-2])
+        os.system(' '.join([args.isbi, dataset_path, seq_num]))
+
+
+def _mk_res_dir(path):
+    """Create the directory where segmented frames are stored and return path.
+
+    It needs to conform to ISBI's regulation in order for the evaluation tool
+    to work. If we use the first sequence of a dataset, then the resulting
+    folder tree will look like this:
+
+        |-- 01  <-- path
+        |-- 01_GT
+        |   |-- SEG
+        |   `-- TRA
+        `-- 01_RES  <-- The Create directory
+    """
+    result_path = path[:-1] + '_RES'
+
+    try:
+        os.mkdir(path)
+    except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            shutil.rmtree(result_path)
+            os.mkdir(result_path)
+
+    return result_path
+
+
+def _gen_tiff(path, frame, idx):
+    """Write 'frame' as a tiff file into 'path'."""
+    num = '{:03d}'.format(idx)
+    fname = 'mask' + num + '.tif'
+    tiff = TIFFimage(frame, description='\x00')  # End with null byte.
+    tiff.write_file(path + '/' + fname, compression='none')
+    del tiff
+
+
+if __name__ == '__main__':
+    status = main()
+    sys.exit(status)
