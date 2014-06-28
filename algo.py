@@ -1,19 +1,86 @@
 import numpy as np
 import pymorph
+import mahotas
 import pylab as plt
 from scipy import ndimage
+import pdb
 
 
 class HEID:
     def __init__(self, frame, sigma_f, r, min_var, r_med):
-        self.frame = frame
-        self.sigma_f = sigma_f
-        self.r = r
-        self.min_var = min_var
-        self.r_med = r_med
+        self._frame = frame
+        self._sigma_f = sigma_f
+        self._r = r
+        self._min_var = min_var
+        self._r_med = r_med
 
-    def start():
-        pass
+    def start(self):
+        """Segment the frame.
+
+        The returned value is a labeled uint16 image.
+        """
+        # Preprocessing.
+        I = ndimage.filters.gaussian_filter(self._frame, self._sigma_f)
+
+        # Thresholding.
+        otsu_thresh = mahotas.thresholding.otsu(I)
+        fnc = fnc_class(I.shape)
+        I_bin = ndimage.filters.generic_filter(I, fnc.filter, size=self._r,
+                                               extra_arguments=(I, self._min_var,
+                                                                otsu_thresh))
+        # Hole filling.
+        I_med = ndimage.filters.median_filter(I_bin, size=self._r_med)
+        I_holes = ndimage.morphology.binary_fill_holes(I_med)
+
+        """
+        plt.subplot(2, 2, 1)
+        plt.title('Original Image')
+        plt.imshow(self._frame, cmap=plt.cm.gray)
+        plt.subplot(2, 2, 2)
+        plt.title('After Thresholding')
+        plt.imshow(I_bin)
+        plt.subplot(2, 2, 3)
+        plt.title('After Median Filtering')
+        plt.imshow(I_med)
+        plt.subplot(2, 2, 4)
+        plt.title('After Hole Filling')
+        plt.imshow(I_holes)
+        plt.show()
+        pdb.set_trace()
+        """
+
+
+class fnc_class:
+    def __init__(self, shape):
+        # store the shape:
+        self.shape = shape
+        # initialize the coordinates (row, col):
+        self.coordinates = [0] * len(shape)
+
+    def filter(self, buffer, I, min_var, glob_thresh):
+        """Classify a pixel as foreground (True) or background (False).
+        
+        If the variance of the elements of 'x' is larger than 'min_var', then
+        the current considered pixel is thresholded using a local threshold,
+        otherwise it is thresholded using the global threshold, 'glob_thresh'.
+        """
+        if np.var(buffer) > min_var:
+            thresh = mahotas.thresholding.otsu(buffer.astype('uint16'))
+        else:
+            thresh = glob_thresh
+
+        row, col = self.coordinates[0], self.coordinates[1]
+        # calculate the next coordinates:
+        axes = range(len(self.shape))
+        axes.reverse()
+        for jj in axes:
+            if self.coordinates[jj] < self.shape[jj] - 1:
+                self.coordinates[jj] += 1
+                break
+            else:
+                self.coordinates[jj] = 0
+
+        return I[row, col] > thresh
 
 
 class KTH:
