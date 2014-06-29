@@ -1,8 +1,10 @@
 import numpy as np
 import pymorph
-import mahotas
+import mahotas as mh
 import pylab as plt
 from scipy import ndimage
+from skimage import morphology as morph
+from skimage import measure
 import pdb
 
 
@@ -20,34 +22,86 @@ class HEID:
         The returned value is a labeled uint16 image.
         """
         # Preprocessing.
-        I = ndimage.filters.gaussian_filter(self._frame, self._sigma_f)
+        I = self._frame / np.float(self._frame.max()) * 255.0
+        I = ndimage.filters.gaussian_filter(I, self._sigma_f)
 
+        # Run the algorithm for the first time to produce a mask. Then, use
+        # this mask the replace the bright pixels with the mean value and
+        # rerun the algorithm.
+        #I_label = self._segment(I).astype('bool')
+        I_mask = self._segment(I, True).astype('bool')
+        mean_fore = I[I_mask].mean()
+        I[I_mask] = mean_fore
+        I = ndimage.filters.gaussian_filter(I, self._sigma_f)
+        I_label = self._segment(I.copy(), False)
+
+        return I_label
+
+    def _segment(self, I, first):
         # Thresholding.
-        otsu_thresh = mahotas.thresholding.otsu(I)
+        otsu_thresh = mh.thresholding.otsu(I.astype('uint16'))
         fnc = fnc_class(I.shape)
         I_bin = ndimage.filters.generic_filter(I, fnc.filter, size=self._r,
                                                extra_arguments=(I, self._min_var,
                                                                 otsu_thresh))
-        # Hole filling.
-        I_med = ndimage.filters.median_filter(I_bin, size=self._r_med)
-        I_holes = ndimage.morphology.binary_fill_holes(I_med)
+        # Remove cells which are too small (leftovers).
+        I_morph = ndimage.filters.median_filter(I_bin, size=self._r_med)
+        I_label = mh.label(I_morph)[0]
+        sizes = mh.labeled.labeled_size(I_label)
+        too_small = np.where(sizes < 100)
+        I_label = mh.labeled.remove_regions(I_label, too_small)
+        I_label = mh.labeled.relabel(I_label)[0]
+        # Fill holes.
+        I_morph = ndimage.morphology.binary_fill_holes(I_label > 0)
+        I_morph0 = I_morph.copy()
+        if first:
+            I_morph = morph.binary_closing(I_morph, morph.disk(3))
+        else:
+            I_morph = morph.binary_closing(I_morph, morph.disk(6))
+        labels = measure.label(I_morph)
+        labelCount = np.bincount(labels.ravel())
+        background = np.argmax(labelCount)
+        I_morph[labels != background] = True
+
+        I_morph1 = I_morph.copy()
+        I_morph = I_morph.astype('uint16')
+
+        # Separate touching cells using watershed.
+        # Distance transfrom on which to apply the watershed algorithm.
+        I_dist = ndimage.distance_transform_edt(I_morph)
+        I_dist = I_dist/float(I_dist.max()) * 255
+        I_dist = I_dist.astype(np.uint8)
+        # Find markers for the watershed algorithm.
+        # Reduce false positive using Gaussian smoothing.
+        I_mask = ndimage.filters.gaussian_filter(I_dist, 8)*I_morph
+        rmax = pymorph.regmax(I_mask)
+        I_markers, _ = ndimage.label(rmax)
+        I_dist = I_dist.max() - I_dist  # Cells are now the basins.
+        I_label = pymorph.cwatershed(I_dist, I_markers)
 
         """
-        plt.subplot(2, 2, 1)
-        plt.title('Original Image')
-        plt.imshow(self._frame, cmap=plt.cm.gray)
-        plt.subplot(2, 2, 2)
-        plt.title('After Thresholding')
-        plt.imshow(I_bin)
-        plt.subplot(2, 2, 3)
-        plt.title('After Median Filtering')
-        plt.imshow(I_med)
-        plt.subplot(2, 2, 4)
-        plt.title('After Hole Filling')
-        plt.imshow(I_holes)
-        plt.show()
-        pdb.set_trace()
+        if not first:
+            plt.subplot(2, 3, 1)
+            plt.title('Original Image')
+            plt.imshow(self._frame)
+            plt.subplot(2, 3, 2)
+            plt.title('After Smoothing')
+            plt.imshow(I)
+            plt.subplot(2, 3, 3)
+            plt.title('After Thresholding')
+            plt.imshow(I_bin, cmap=plt.cm.gray)
+            plt.subplot(2, 3, 4)
+            plt.title('After Morphological Operations')
+            plt.imshow(I_morph0, cmap=plt.cm.gray)
+            plt.subplot(2, 3, 5)
+            plt.title('After Hole Filling')
+            plt.imshow(I_morph1, cmap=plt.cm.gray)
+            plt.subplot(2, 3, 6)
+            plt.title('After Watershed Transform')
+            plt.imshow(I_label)
+            plt.show()
         """
+        return I_label.astype('uint16')
 
 
 class fnc_class:
@@ -65,9 +119,12 @@ class fnc_class:
         otherwise it is thresholded using the global threshold, 'glob_thresh'.
         """
         if np.var(buffer) > min_var:
-            thresh = mahotas.thresholding.otsu(buffer.astype('uint16'))
+            thresh = buffer.mean()
+            #thresh = mh.thresholding.otsu(buffer.astype('uint16'))
+            #thresh = self.thresh_min_err(buffer)
         else:
             thresh = glob_thresh
+        #thresh = glob_thresh
 
         row, col = self.coordinates[0], self.coordinates[1]
         # calculate the next coordinates:
@@ -81,6 +138,52 @@ class fnc_class:
                 self.coordinates[jj] = 0
 
         return I[row, col] > thresh
+
+    def thresh_min_err(self, buffer):
+        """Return the threshold for 'buffer'.
+
+        The returned threshold is computed according to J. Kittler &
+        J. Illingworth: "Minimum Error Thresholding".
+
+        The code was translated from the following MATLAB implementation:
+        http://stackoverflow.com/questions/2055774/adaptive-thresholding
+        """
+        # Initialize the criterion function.
+        J = np.inf * np.ones(255)
+
+        # Compute the probability densitiy function.
+        histogram = np.fromiter((np.sum(buffer == x) for x in np.arange(0, 256)),
+                                np.int) / float(buffer.size)
+        
+        # Walk through every possible threshold. However, T is interpreted
+        # differently than in the paper. It is interpreted as the lower
+        # boundary of the second class of pixels rather than the upper
+        # boundary of the first class. That is, an intensity value of T is
+        # treated as being in the same class as higher intensities rather
+        # than lower intensities.
+        for T in np.arange(1, 256):
+            # Split the histogram at threshold T.
+            histogram1 = histogram[1:T]
+            histogram2 = histogram[T:]
+
+            # Compute the probability of each class.
+            P1 = histogram1.sum()
+            P2 = histogram2.sum()
+
+            # Continue only if both classes aren't empty.
+            if P1 > 0 and P2 > 0:
+                # Compute the STD of both classes.
+                mean1, sigma1  = histogram1.mean(), histogram1.std()
+                mean2, sigma2  = histogram2.mean(), histogram2.std()
+
+                # Compute the criterion function only if both classes contain
+                # at least two intensity values.
+                if sigma1 > 0 and sigma2 > 0:
+                    J[T-1] = (1 + 2 * (P1 * np.log(sigma1) + P2 * np.log(sigma2))
+                              - 2 * (P1 * np.log(P1) + P2 * np.log(P2)))
+
+        # Find the value of T, which minimizes J.
+        return np.argmin(J)
 
 
 class KTH:
