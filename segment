@@ -1,7 +1,7 @@
-#! /usr/bin/env python2
+#!/usr/bin/env python2
 """Main cell segmentation script.
 
-Usage: ./segment.py --help
+Usage: segment --help
 """
 import sys
 import argparse
@@ -16,14 +16,11 @@ from algo import HEID, KTH
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Segment cells in time-laspe\
-            microscopy images.')
+    parser = argparse.ArgumentParser(description='Segment cells in time-laspe microscopy images.',
+                                     formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(title='Segmentation algorithm, to use',
-                                       description='1. KTH-SE: developed in\
-                                       KTH, Sweden.\
-                                       2. HEID-GE: developed in University of\
-                                       Heidelberg, Germany.',
-                                       help='additional help',
+                                       description='1. KTH-SE: developed in KTH, Sweden.\n2. HEID-GE: developed in University of Heidelberg, Germany.',
+                                       help='Additional help.',
                                        dest='subparser_name')
 
     # Global arguments.
@@ -31,9 +28,8 @@ def main():
                         help="Path to directory containing the images.",
                         type=str)
     parser.add_argument("--isbi",
-                        help="Path to ISBI's seg evaluation tool. tiff images\
-                              will be written to the RES directory as\
-                              described in ISBI's documents.", type=str)
+                        help="Path to ISBI's segmentation evaluation tool. TIFF images will be written to the RES directory as described in ISBI's documents.",
+                        type=str)
     parser.add_argument("-v", "--verbose", help="Report progress.",
                         action="store_true")
     parser.add_argument("-d", "--debug", help="Debug mode.",
@@ -41,12 +37,22 @@ def main():
 
     # HEID-GE arguments.
     parser_heid = subparsers.add_parser('HEID-GE')
-    parser_heid.add_argument("sigma_f", help="Preprocessing Gaussian filter\
-            standard deviation.", type=float)
+    parser_heid.add_argument("sigma_f",
+                             help="Preprocessing Gaussian filter standard deviation.",
+                             type=float)
     parser_heid.add_argument("r", help="Average object diameter.", type=int)
     parser_heid.add_argument("min_var", help="Minimum variance threshold.",
                              type=float)
     parser_heid.add_argument("r_med", help="Radius of median filter.",
+                             type=int)
+    parser_heid.add_argument("-r1", "--r1_closing", metavar="R1",
+                             help="Radius of the disk used for morphological closing in the first iteration.",
+                             type=int)
+    parser_heid.add_argument("-r2", "--r2_closing", metavar="R2",
+                             help="Radius the disk used for morphological closing in the second iteration.",
+                             type=int)
+    parser_heid.add_argument("-a", "--a_min",
+                             help="Minimum cell area.",
                              type=int)
 
     # KTH arguments.
@@ -90,7 +96,8 @@ def main():
         frame = plt.imread(frame_path)
         if args.subparser_name == 'HEID-GE':
             segmented_frame = HEID(frame, args.sigma_f, args.r, args.min_var,
-                                   args.r_med).start()
+                                   args.r_med, r1=args.r1_closing,
+                                   r2=args.r2_closing, a_min=args.a_min).start()
         elif args.subparser_name == 'KTH-SE':
             segmented_frame = KTH(frame, args.sigma_s, args.sigma_b,
                                   args.alpha, args.tau,
