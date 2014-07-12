@@ -45,7 +45,7 @@ def main():
             standard deviation.", type=float)
     parser_heid.add_argument("r", help="Average object diameter.", type=int)
     parser_heid.add_argument("min_var", help="Minimum variance threshold.",
-                             type=int)
+                             type=float)
     parser_heid.add_argument("r_med", help="Radius of median filter.",
                              type=int)
 
