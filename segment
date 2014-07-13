@@ -45,14 +45,12 @@ def main():
                              type=float)
     parser_heid.add_argument("r_med", help="Radius of median filter.",
                              type=int)
+    parser_heid.add_argument("a_min", help="Minimum cell area.", type=int)
     parser_heid.add_argument("-r1", "--r1_closing", metavar="R1",
                              help="Radius of the disk used for morphological closing in the first iteration.",
                              type=int)
     parser_heid.add_argument("-r2", "--r2_closing", metavar="R2",
                              help="Radius the disk used for morphological closing in the second iteration.",
-                             type=int)
-    parser_heid.add_argument("-a", "--a_min",
-                             help="Minimum cell area.",
                              type=int)
 
     # KTH arguments.
@@ -96,8 +94,8 @@ def main():
         frame = plt.imread(frame_path)
         if args.subparser_name == 'HEID-GE':
             segmented_frame = HEID(frame, args.sigma_f, args.r, args.min_var,
-                                   args.r_med, r1=args.r1_closing,
-                                   r2=args.r2_closing, a_min=args.a_min).start()
+                                   args.r_med, args.a_min, r1=args.r1_closing,
+                                   r2=args.r2_closing, debug=args.debug).start()
         elif args.subparser_name == 'KTH-SE':
             segmented_frame = KTH(frame, args.sigma_s, args.sigma_b,
                                   args.alpha, args.tau,

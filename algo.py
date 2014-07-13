@@ -1,14 +1,15 @@
 import numpy as np
-import pymorph
 import mahotas as mh
+import pymorph
 from scipy import ndimage
-from skimage import morphology as morph
 from skimage import measure
+from skimage import morphology as morph
+import pylab as plt
 
 
 class HEID:
-    def __init__(self, frame, sigma_f, r, min_var, r_med, r1=None, r2=None,
-                 a_min=None):
+    def __init__(self, frame, sigma_f, r, min_var, r_med, a_min, r1=None,
+                 r2=None, debug=None):
         self._frame = frame
         self._sigma_f = sigma_f
         self._r = r
@@ -17,6 +18,7 @@ class HEID:
         self._r1 = r1
         self._r2 = r2
         self._a_min = a_min
+        self._debug = debug
 
     def start(self):
         """Segment the frame.
@@ -56,16 +58,15 @@ class HEID:
                                                                 otsu_thresh))
 
         I_med = ndimage.filters.median_filter(I_bin, size=self._r_med)
-        I_label = mh.label(I_med)[0]
         # Remove cells which are too small (leftovers).
-        if self._a_min:
-            sizes = mh.labeled.labeled_size(I_label)
-            too_small = np.where(sizes < self._a_min)
-            I_label = mh.labeled.remove_regions(I_label, too_small)
-            I_label = mh.labeled.relabel(I_label)[0]
+        labeled = mh.label(I_med)[0]
+        sizes = mh.labeled.labeled_size(labeled)
+        too_small = np.where(sizes < self._a_min)
+        I_cleanup = mh.labeled.remove_regions(labeled, too_small)
+        I_cleanup = mh.labeled.relabel(I_cleanup)[0]
 
         # Fill holes.
-        I_holes = ndimage.morphology.binary_fill_holes(I_label > 0)
+        I_holes = ndimage.morphology.binary_fill_holes(I_cleanup > 0)
 
         # Binary closing.
         if first and self._r1:
@@ -80,8 +81,8 @@ class HEID:
 
         # Fill yet to be filled holes.
         labels = measure.label(I_morph)
-        label_count = np.bincount(labels.ravel())
-        background = np.argmax(label_count)
+        labelCount = np.bincount(labels.ravel())
+        background = np.argmax(labelCount)
         I_morph[labels != background] = True
 
         # Separate touching cells using watershed.
@@ -90,12 +91,36 @@ class HEID:
         I_dist = I_dist/float(I_dist.max()) * 255
         I_dist = I_dist.astype(np.uint8)
         # Find markers for the watershed algorithm.
-        # Reduce false positives using Gaussian smoothing.
+        # Reduce false positive using Gaussian smoothing.
         I_mask = ndimage.filters.gaussian_filter(I_dist, 8)*I_morph
         rmax = pymorph.regmax(I_mask)
         I_markers, _ = ndimage.label(rmax)
         I_dist = I_dist.max() - I_dist  # Cells are now the basins.
         I_label = pymorph.cwatershed(I_dist, I_markers)
+
+        if self._debug:
+            plt.subplot(2, 4, 1)
+            plt.imshow(I)
+            plt.title('Original Image')
+            plt.subplot(2, 4, 2)
+            plt.imshow(I_bin)
+            plt.title('After Thresholding')
+            plt.subplot(2, 4, 3)
+            plt.imshow(I_med)
+            plt.title('After Median Filter')
+            plt.subplot(2, 4, 4)
+            plt.imshow(I_cleanup)
+            plt.title('After Cleanup')
+            plt.subplot(2, 4, 5)
+            plt.imshow(I_holes)
+            plt.title('After Hole Filling')
+            plt.subplot(2, 4, 6)
+            plt.imshow(I_morph)
+            plt.title('After Closing')
+            plt.subplot(2, 4, 7)
+            plt.imshow(I_label)
+            plt.title('Labeled Image')
+            plt.show()
 
         return I_label.astype('uint16')
 
