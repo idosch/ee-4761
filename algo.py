@@ -208,6 +208,43 @@ class fnc_class:
         return np.argmin(J)
 
 
+class ilastik:
+    def __init__(self, frame, a_min=None, fill=None):
+        self._frame = frame
+        self._a_min = a_min
+        self._fill = fill
+
+    def start(self):
+        """Segment the frame.
+
+        The returned value is a labeled uint16 image.
+        """
+        background = np.bincount(self._frame.ravel()).argmax()  # Most common value.
+        I_label = measure.label(self._frame, background=background)
+        I_label += 1  # Background is labeled as -1, make it 0.
+        I_bin = I_label > 0
+
+        # Remove cells which are too small (leftovers).
+        if self._a_min:
+            I_label = mh.label(I_bin)[0]
+            sizes = mh.labeled.labeled_size(I_label)
+            too_small = np.where(sizes < self._a_min)
+            I_cleanup = mh.labeled.remove_regions(I_label, too_small)
+            I_bin = I_cleanup > 0
+
+        # Fill holes.
+        if self._fill:
+            I_bin = ndimage.morphology.binary_fill_holes(I_bin)  # Small holes.
+            # Bigger holes.
+            labels = measure.label(I_bin)
+            label_count = np.bincount(labels.ravel())
+            background = np.argmax(label_count)
+            I_bin[labels != background] = True
+
+        I_label = mh.label(I_bin)[0].astype('uint16')
+        return I_label
+
+
 class KTH:
     def __init__(self, image, sigma_s, sigma_b, alpha, tau,
                  watershed=None, sigma_w=None, h_min=None, a_min=None,

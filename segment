@@ -12,20 +12,20 @@ import shutil
 
 import pylab as plt
 from libtiff import TIFFimage
-from algo import HEID, KTH
+from algo import HEID, KTH, ilastik
 
 
 def main():
     parser = argparse.ArgumentParser(description='Segment cells in time-laspe microscopy images.',
                                      formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(title='Segmentation algorithm, to use',
-                                       description='1. KTH-SE: developed in KTH, Sweden.\n2. HEID-GE: developed in University of Heidelberg, Germany.',
+                                       description='1. KTH-SE: developed in KTH, Sweden.\n2. HEID-GE: developed in University of Heidelberg, Germany.\n3. ilastik: use an hybrid method, where ilastik performs the thresholding.',
                                        help='Additional help.',
                                        dest='subparser_name')
 
     # Global arguments.
     parser.add_argument("directory",
-                        help="Path to directory containing the images.",
+                        help="Path to directory containing the images. This is usually of the form <dataset>/0<X>, where X is the sequence number. If 'ilastik' is used, then its output images should be saved in the same naming scheme as ISBI's raw images, e.g. t012.tif and the latter 'i' should be appended to the directory where the images are stored, e.g. <dataset>/03i",
                         type=str)
     parser.add_argument("--isbi",
                         help="Path to ISBI's segmentation evaluation tool. TIFF images will be written to the RES directory as described in ISBI's documents.",
@@ -74,6 +74,11 @@ def main():
     parser_kth.add_argument("--s_min", help="Minimum cell summed intensity.",
                             type=float)
 
+    # ilastik arguments.
+    parser_ilastik = subparsers.add_parser('ilastik')
+    parser_ilastik.add_argument("--a_min", "-a",  help="Minimum cell area.", type=int, metavar="A")
+    parser_ilastik.add_argument("--fill-holes", "-f",  help="Fill holes inside objects.", action="store_true")
+
     args = parser.parse_args()
 
     # Retrieve ordered frames list.
@@ -103,6 +108,9 @@ def main():
                                   sigma_w=args.sigma_w,
                                   h_min=args.h_min, a_min=args.a_min,
                                   s_min=args.s_min).start()
+        elif args.subparser_name == 'ilastik':
+            segmented_frame = ilastik(frame, a_min=args.a_min, fill=args.fill_holes).start()
+
         if args.isbi:
             _gen_tiff(result_path, segmented_frame, idx)
         if args.debug:
@@ -118,6 +126,9 @@ def main():
     if args.isbi:
         split = args.directory.split('/')
         seq_num = split[-2]
+        if seq_num[-1] == 'i':
+            # ilastik.
+            seq_num = seq_num[:-1]
         dataset_path = '/'.join(split[:-2])
         os.system(' '.join([args.isbi, dataset_path, seq_num]))
 
@@ -135,10 +146,14 @@ def _mk_res_dir(path):
         |   `-- TRA
         `-- 01_RES  <-- The Create directory
     """
-    result_path = path[:-1] + '_RES'
+    if path[-2] == 'i':
+        # ilastik algorithm.
+        result_path = path[:-2] + '_RES'
+    else:
+        result_path = path[:-1] + '_RES'
 
     try:
-        os.mkdir(path)
+        os.mkdir(result_path)
     except OSError as exc:
         if exc.errno == errno.EEXIST:
             shutil.rmtree(result_path)
